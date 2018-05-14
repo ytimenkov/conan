@@ -50,7 +50,8 @@ def _runner(args):
 
 
 def _normal_linter(conanfile_path, hook):
-    args = ['--py3k', "--enable=all", "--reports=no", "--disable=no-absolute-import", "--persistent=no",
+    args = ["--py3k", "--enable=all", "--reports=no", "--disable=no-absolute-import", "--persistent=no", 
+            "--load-plugins=conans.client.conanfile_plugin",
             hook, '"%s"' % conanfile_path]
     pylintrc = os.environ.get("CONAN_PYLINTRC", None)
     if pylintrc:
@@ -59,17 +60,11 @@ def _normal_linter(conanfile_path, hook):
         args.append('--rcfile="%s"' % pylintrc)
 
     output_json = _runner(args)
-    dynamic_fields = ("source_folder", "build_folder", "package_folder", "info_build",
-                      "build_requires", "info")
 
     def _accept_message(msg):
         symbol = msg.get("symbol")
         text = msg.get("message")
 
-        if symbol == "no-member":
-            for field in dynamic_fields:
-                if field in text:
-                    return False
         if symbol == "not-callable" and "self.copy is not callable" == text:
             return False
         if symbol == "not-callable" and "self.copy_deps is not callable" == text:
