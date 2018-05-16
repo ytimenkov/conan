@@ -63,12 +63,7 @@ def _normal_linter(conanfile_path, hook):
 
     def _accept_message(msg):
         symbol = msg.get("symbol")
-        text = msg.get("message")
 
-        if symbol == "not-callable" and "self.copy is not callable" == text:
-            return False
-        if symbol == "not-callable" and "self.copy_deps is not callable" == text:
-            return False
         if symbol in ("bare-except", "broad-except"):  # No exception type(s) specified
             return False
         if symbol == "import-error" and msg.get("column") > 3:  # Import of a conan python package
