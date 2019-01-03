@@ -1,7 +1,175 @@
 import os
+from abc import ABCMeta, abstractproperty, abstractmethod
 
 from conans.client.tools.oss import OSInfo
 from conans.model import Generator
+
+
+class BasicScriptGenerator(object):
+    __metaclass__ = ABCMeta
+
+    append_with_spaces = [
+        "CPPFLAGS", "CFLAGS", "CXXFLAGS", "LIBS", "LDFLAGS", "CL"
+    ]
+
+    def __init__(self, name, env):
+        self.name = name
+        self.env = env
+
+    def activate_lines(self):
+        yield self.activate_prefix
+
+        for name, value in self.env.items():
+            if isinstance(value, list):
+                placeholder = self.placeholder_format.format(name)
+                if name in self.append_with_spaces:
+                    # Variables joined with spaces look like: CPPFLAGS="one two three"
+                    formatted_value = self.single_value_format.format(
+                        " ".join(value + [placeholder]))
+                else:
+                    # Quoted variables joined with pathset may look like:
+                    # PATH="one path":"two paths"
+                    # Unquoted variables joined with pathset may look like: PATH=one path;two paths
+                    formatted_value = self.path_separator.join(
+                        self.path_transform(value) + [placeholder])
+            else:
+                formatted_value = self.single_value_format.format(value)
+
+            yield self.activate_value_format.format(
+                name=name, value=formatted_value)
+
+        yield self.activate_suffix
+
+        if not self.deactivate_is_function:
+            return
+
+        yield self.deactivate_prefix
+
+        for name in self.env:
+            yield self.deactivate_value_format.format(name=name)
+
+        yield self.deactivate_suffix
+
+    def deactivate_lines(self):
+        pass
+
+    @abstractproperty
+    def activate_prefix(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def activate_suffix(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def activate_value_format(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def single_value_format(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def placeholder_format(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def path_transform(self, values):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def path_separator(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def deactivate_is_function(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def deactivate_prefix(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def deactivate_value_format(self):
+        raise NotImplementedError()
+
+    @abstractproperty
+    def deactivate_suffix(self):
+        raise NotImplementedError()
+
+
+class PosixValueFormats(object):
+    # NTOE: Maybe this should be a function which escapes internal quotes,
+    # e.g. if some CXXFLAGS contain spaces and are quoted themselves.
+    single_value_format = '"{}"'
+    placeholder_format = "${}"
+    path_separator = ":"
+    path_transform = lambda self, values: ['"%s"' % v for v in values]
+
+
+class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
+    def __init__(self, name, env):
+        # Path is handled separately in fish.
+        self.path = env.get("PATH", None)
+        if "PATH" in env:
+            env = env.copy()
+            del env["PATH"]
+
+        super(FishScriptGenerator, self).__init__(name, env)
+
+    @property
+    def activate_prefix(self):
+        standard_prefix = """
+if set -q venv_name
+    deactivate
+end
+set -g venv_name "%s"
+""" % self.name
+
+        paths_prefix = """
+if set -q fish_user_paths
+    set -g _venv_old_fish_user_paths fish_user_paths
+end
+set -g fish_user_paths %s $fish_user_paths
+""" % " ".join(['"%s"' % val for val in self.path]) if self.path else ""
+
+        return standard_prefix + paths_prefix
+
+    activate_suffix = ""
+
+    activate_value_format = """if set -q {name}
+    set -g _venv_old_{name} ${name}
+end
+set -gx {name} {value}
+"""
+
+    deactivate_is_function = True
+
+    @property
+    def deactivate_prefix(self):
+        paths_prefix = """
+    if set -q _venv_old_fish_user_paths
+        set -g fish_user_paths $_venv_old_fish_user_paths
+        set -e _venv_old_fish_user_paths
+    else
+        set -e fish_user_paths
+    end""" if self.path else ""
+
+        return 'function deactivate --description "Deactivate current virtualenv"' + paths_prefix
+
+    deactivate_suffix = """
+    set -e venv_name
+    functions -e deactivate
+end
+"""
+
+    deactivate_value_format = """
+    if set -q _venv_old_{name}
+        set -gx {name} $_venv_old_{name}
+        set -e _venv_old_{name}
+    else
+        set -ex {name}
+    end"""
 
 
 class VirtualEnvGenerator(Generator):
@@ -9,7 +177,7 @@ class VirtualEnvGenerator(Generator):
     append_with_spaces = ["CPPFLAGS", "CFLAGS", "CXXFLAGS", "LIBS", "LDFLAGS", "CL"]
 
     def __init__(self, conanfile):
-        self.conanfile = conanfile
+        super(VirtualEnvGenerator, self).__init__(conanfile)
         self.env = conanfile.env
         self.venv_name = "conanenv"
 
@@ -130,6 +298,10 @@ class VirtualEnvGenerator(Generator):
             activate, deactivate = self._ps1_lines()
             result["activate.ps1"] = os.linesep.join(activate)
             result["deactivate.ps1"] = os.linesep.join(deactivate)
+
+        if os_info.is_posix:
+            result["activate.fish"] = os.linesep.join(
+                FishScriptGenerator(self.venv_name, self.env).activate_lines())
 
         activate, deactivate = self._sh_lines()
         result["activate.sh"] = os.linesep.join(activate)
