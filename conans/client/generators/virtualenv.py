@@ -1,5 +1,7 @@
 import os
-from abc import ABCMeta, abstractproperty, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
+from itertools import chain
+from textwrap import dedent
 
 from conans.client.tools.oss import OSInfo
 from conans.model import Generator
@@ -24,14 +26,14 @@ class BasicScriptGenerator(object):
                 placeholder = self.placeholder_format.format(name)
                 if name in self.append_with_spaces:
                     # Variables joined with spaces look like: CPPFLAGS="one two three"
-                    formatted_value = self.single_value_format.format(
-                        " ".join(value + [placeholder]))
+                    formatted_value = self.single_value_format.format(" ".join(
+                        chain(value, [placeholder])))
                 else:
                     # Quoted variables joined with pathset may look like:
                     # PATH="one path":"two paths"
                     # Unquoted variables joined with pathset may look like: PATH=one path;two paths
                     formatted_value = self.path_separator.join(
-                        self.path_transform(value) + [placeholder])
+                        chain(self.path_transform(value), [placeholder]))
             else:
                 formatted_value = self.single_value_format.format(value)
 
@@ -40,18 +42,13 @@ class BasicScriptGenerator(object):
 
         yield self.activate_suffix
 
-        if not self.deactivate_is_function:
-            return
-
+    def deactivate_lines(self):
         yield self.deactivate_prefix
 
         for name in self.env:
             yield self.deactivate_value_format.format(name=name)
 
         yield self.deactivate_suffix
-
-    def deactivate_lines(self):
-        pass
 
     @abstractproperty
     def activate_prefix(self):
@@ -82,10 +79,6 @@ class BasicScriptGenerator(object):
         raise NotImplementedError()
 
     @abstractproperty
-    def deactivate_is_function(self):
-        raise NotImplementedError()
-
-    @abstractproperty
     def deactivate_prefix(self):
         raise NotImplementedError()
 
@@ -104,7 +97,9 @@ class PosixValueFormats(object):
     single_value_format = '"{}"'
     placeholder_format = "${}"
     path_separator = ":"
-    path_transform = lambda self, values: ['"%s"' % v for v in values]
+
+    def path_transform(self, values):
+        return ('"%s"' % v for v in values)
 
 
 class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
@@ -119,57 +114,109 @@ class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
 
     @property
     def activate_prefix(self):
-        standard_prefix = """
-if set -q venv_name
-    deactivate
-end
-set -g venv_name "%s"
-""" % self.name
+        paths_prefix = dedent("""\
+            if set -q fish_user_paths
+                set -g _venv_old_fish_user_paths fish_user_paths
+            end
+            set -g fish_user_paths %s $fish_user_paths
+            """) % " ".join(self.path_transform(
+            self.path)) if self.path else ""
 
-        paths_prefix = """
-if set -q fish_user_paths
-    set -g _venv_old_fish_user_paths fish_user_paths
-end
-set -g fish_user_paths %s $fish_user_paths
-""" % " ".join(['"%s"' % val for val in self.path]) if self.path else ""
+        return dedent("""\
+            if set -q venv_name
+                deactivate
+            end
+            set -g venv_name "%s"
 
-        return standard_prefix + paths_prefix
+            %s""") % (self.name, paths_prefix)
 
     activate_suffix = ""
 
-    activate_value_format = """if set -q {name}
-    set -g _venv_old_{name} ${name}
-end
-set -gx {name} {value}
-"""
-
-    deactivate_is_function = True
+    activate_value_format = dedent("""\
+        if set -q {name}
+            set -g _venv_old_{name} ${name}
+        end
+        set -gx {name} {value}""")
 
     @property
     def deactivate_prefix(self):
-        paths_prefix = """
-    if set -q _venv_old_fish_user_paths
-        set -g fish_user_paths $_venv_old_fish_user_paths
-        set -e _venv_old_fish_user_paths
-    else
-        set -e fish_user_paths
-    end""" if self.path else ""
+        paths_prefix = dedent("""\
+            if set -q _venv_old_fish_user_paths
+                set -g fish_user_paths $_venv_old_fish_user_paths
+                set -e _venv_old_fish_user_paths
+            else
+                set -e fish_user_paths
+            end""") if self.path else ""
 
-        return 'function deactivate --description "Deactivate current virtualenv"' + paths_prefix
+        return dedent("""\
+            function deactivate --description "Deactivate current virtualenv"
 
-    deactivate_suffix = """
-    set -e venv_name
-    functions -e deactivate
-end
-"""
+            %s
+            """) % paths_prefix
 
-    deactivate_value_format = """
-    if set -q _venv_old_{name}
-        set -gx {name} $_venv_old_{name}
-        set -e _venv_old_{name}
-    else
-        set -ex {name}
-    end"""
+    deactivate_suffix = dedent("""\
+        set -e venv_name
+        functions -e deactivate
+
+        end
+        """)
+
+    deactivate_value_format = dedent("""\
+        if set -q _venv_old_{name}
+            set -gx {name} $_venv_old_{name}
+            set -e _venv_old_{name}
+        else
+            set -ex {name}
+        end
+        """)
+
+
+class ShScriptGenerator(PosixValueFormats, BasicScriptGenerator):
+    def __init__(self, name, env):
+        env = env.copy()
+        env["PS1"] = "(%s) $PS1" % name
+        super(ShScriptGenerator, self).__init__(name, env)
+
+    @property
+    def activate_prefix(self):
+        return dedent("""\
+            if [ -n "${VENV_NAME:-}" ] ; then
+                deactivate
+            fi
+            VENV_NAME="%s"
+            export VENV_NAME
+            """) % self.name
+
+    activate_value_format = dedent("""\
+        if [ -n "${{{name}:-}}" ] ; then
+            _venv_old_{name}="${{{name}}}"
+        fi
+        {name}={value}
+        export {name}
+        """)
+
+    activate_suffix = ""
+
+    deactivate_prefix = dedent("""\
+        deactivate () {
+        """)
+
+    deactivate_suffix = dedent("""\
+        unset VENV_NAME
+        unset -f deactivate
+
+        }
+        """)
+
+    deactivate_value_format = dedent("""\
+        if [ -n "${{_venv_old_{name}:-}}" ] ; then
+            {name}="${{_venv_old_{name}:-}}"
+            export {name}
+            unset _venv_old_{name}
+        else
+            unset {name}
+        fi
+        """)
 
 
 class VirtualEnvGenerator(Generator):
@@ -300,11 +347,13 @@ class VirtualEnvGenerator(Generator):
             result["deactivate.ps1"] = os.linesep.join(deactivate)
 
         if os_info.is_posix:
+            fish_script = FishScriptGenerator(self.venv_name, self.env)
             result["activate.fish"] = os.linesep.join(
-                FishScriptGenerator(self.venv_name, self.env).activate_lines())
+                chain(fish_script.activate_lines(),
+                      fish_script.deactivate_lines()))
 
-        activate, deactivate = self._sh_lines()
-        result["activate.sh"] = os.linesep.join(activate)
-        result["deactivate.sh"] = os.linesep.join(deactivate)
+        sh_script = ShScriptGenerator(self.venv_name, self.env)
+        result["activate.sh"] = os.linesep.join(
+            chain(sh_script.activate_lines(), sh_script.deactivate_lines()))
 
         return result
