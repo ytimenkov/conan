@@ -122,7 +122,7 @@ class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
     def activate_prefix(self):
         paths_prefix = dedent("""\
             if set -q fish_user_paths
-                set -g _venv_old_fish_user_paths fish_user_paths
+                set -g _venv_old_fish_user_paths $fish_user_paths
             end
             set -g fish_user_paths %s $fish_user_paths
             """) % " ".join(self.path_transform(
