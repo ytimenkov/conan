@@ -74,12 +74,13 @@ virtualenv
         stdout = decode_text(stdout)
         self.assertRegex(
             stdout,
-            r"(?m)^__conan_venv_test_prog_path__=%s.*bin/conan_venv_test_prog"
-            % self.client.base_folder, "Packaged binary was not found in PATH")
+            r"(?m)^__conan_venv_test_prog_path__=%s.*bin[/\\]conan_venv_test_prog"
+            % self.client.base_folder.replace("\\", "\\\\"),
+            "Packaged binary was not found in PATH")
         self.assertRegex(
             stdout,
-            r"(?m)^__original_prog_path__=%s/original path/conan_original_test_prog"
-            % self.client.current_folder,
+            r"(?m)^__original_prog_path__=%s/original path[/\\]conan_original_test_prog"
+            % self.client.current_folder.replace("\\", "\\\\"),
             "Activated environment incorrectly preserved PATH")
         activated_env = VirtualEnvIntegrationTest.load_env(
             os.path.join(self.client.current_folder, "env_activated.txt"))
@@ -139,7 +140,7 @@ virtualenv
     def powershell_test(self):
         powershell_cmd = "powershell.exe" if os_info.is_windows else "pwsh"
         self.execute_intereactive_shell(
-            [powershell_cmd, "-ExecutionPolicy", "RemoteSigned"], """\
+            [powershell_cmd, "-ExecutionPolicy", "RemoteSigned", "-NoLogo"], """\
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} > env_before.txt
                 . ./activate.ps1
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} > env_activated.txt
