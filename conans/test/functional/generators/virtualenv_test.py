@@ -1,63 +1,47 @@
 import os
+import shutil
 import subprocess
 import unittest
 from textwrap import dedent
 
-from conans.client.tools import which
-from conans.client.tools.oss import OSInfo
-from conans.test.utils.tools import TestClient
-from conans.util.files import decode_text, load, to_file_bytes
+from conans.client.generators.virtualenv import VirtualEnvGenerator
+from conans.client.tools import OSInfo, which
+from conans.test.utils.conanfile import ConanFileMock
+from conans.test.utils.tools import TestBufferConanOutput, temp_folder
+from conans.util.files import decode_text, load, save_files, to_file_bytes
 
 os_info = OSInfo()
 
 
 class VirtualEnvIntegrationTest(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient()
-        package_conanfile = r"""
-import os
-from conans import ConanFile, tools
+        self.test_folder = temp_folder()
+        self.generator = VirtualEnvGenerator(ConanFileMock())
+        self.generator.env = {
+            "PATH": [os.path.join(self.test_folder, "bin")],
+            "CFLAGS": ["-O2"],
+            "USER_VALUE": r"some value with space and \ (backslash)"
+        }
+        self.generator.venv_name = "conan_venv_test_prompt"
 
-class DummyConan(ConanFile):
-    name = "dummy"
-    version = "0.1"
+        trap_files = {
+            os.path.join("original path", "conan_original_test_prog"): "",
+            os.path.join("bin", "conan_venv_test_prog"): "",
+        }
+        save_files(self.test_folder, trap_files)
+        save_files(self.test_folder, self.generator.content)
+        for f in trap_files:
+            os.chmod(os.path.join(self.test_folder, f), 0o755)
 
-    def package(self):
-        # Create a program in bin folder (added to PATH) so we can check that it can be ran later.
-        posix_prog_path = os.path.join(self.package_folder, "bin", "conan_venv_test_prog")
-        tools.save(posix_prog_path, "")
-        os.chmod(posix_prog_path, 0o755)
-
-    def package_info(self):
-        self.env_info.PATH.append(os.path.join(self.package_folder, "bin"))
-        self.env_info.CFLAGS.append("-O2")
-        self.env_info.USER_VALUE = r"some value with space and \ (backslash)"
-"""
-        consumer_conanfile = """
-[requires]
-dummy/0.1@lasote/testing
-[generators]
-virtualenv
-    """
-        self.client.save({"conanfile.py": package_conanfile})
-        self.client.run("export . lasote/testing")
-        self.client.save(
-            {
-                "conanfile.txt": consumer_conanfile,
-                "original path/conan_original_test_prog": "",
-            },
-            clean_first=True)
-        os.chmod(
-            os.path.join(self.client.current_folder, "original path",
-                         "conan_original_test_prog"), 0o755)
-        self.client.run("install . --build")
+    def tearDown(self):
+        shutil.rmtree(os.path.split(self.test_folder)[0], ignore_errors=True)
 
     @property
     def subprocess_env(self):
         env = os.environ.copy()
-        env["PATH"] = "%s%s%s" % (os.path.join(self.client.current_folder,
-                                               "original path"), os.pathsep,
-                                  env.get("PATH", ""))
+        env["PATH"] = "%s%s%s" % (os.path.join(
+            self.test_folder, "original path"), os.pathsep, env.get(
+                "PATH", ""))
         env["CFLAGS"] = "-g"
         env["USER_VALUE"] = "original value"
         return env
@@ -74,15 +58,15 @@ virtualenv
         self.assertRegex(
             stdout,
             r"(?m)^__conan_venv_test_prog_path__=%s.*bin[/\\]conan_venv_test_prog"
-            % self.client.base_folder.replace("\\", "\\\\"),
+            % self.test_folder.replace("\\", "\\\\"),
             "Packaged binary was not found in PATH")
         self.assertRegex(
             stdout,
             r"(?m)^__original_prog_path__=%s.*original path[/\\]conan_original_test_prog"
-            % self.client.current_folder.replace("\\", "\\\\"),
+            % self.test_folder.replace("\\", "\\\\"),
             "Activated environment incorrectly preserved PATH")
         activated_env = VirtualEnvIntegrationTest.load_env(
-            os.path.join(self.client.current_folder, "env_activated.txt"))
+            os.path.join(self.test_folder, "env_activated.txt"))
         self.assertEqual(
             activated_env["CFLAGS"], "-O2 -g",
             "Environment variable with spaces is set incorrectly")
@@ -90,11 +74,12 @@ virtualenv
                          r"some value with space and \ (backslash)",
                          "Custom variable is set incorrectly")
         before_env = VirtualEnvIntegrationTest.load_env(
-            os.path.join(self.client.current_folder, "env_before.txt"))
+            os.path.join(self.test_folder, "env_before.txt"))
         after_env = VirtualEnvIntegrationTest.load_env(
-            os.path.join(self.client.current_folder, "env_after.txt"))
+            os.path.join(self.test_folder, "env_after.txt"))
         self.assertDictEqual(before_env, after_env,
                              "Environment restored incorrectly")
+        return stdout
 
     def execute_intereactive_shell(self, args, commands):
         shell = subprocess.Popen(
@@ -102,10 +87,10 @@ virtualenv
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=self.client.current_folder,
+            cwd=self.test_folder,
             env=self.subprocess_env)
         (stdout, stderr) = shell.communicate(to_file_bytes(dedent(commands)))
-        self.do_verification(stdout, stderr)
+        return self.do_verification(stdout, stderr)
 
     @unittest.skipUnless(os_info.is_posix, "needs POSIX")
     def posix_shell_test(self):
@@ -138,7 +123,7 @@ virtualenv
         os_info.is_windows or which("pwsh"), "Requires PowerShell (Core)")
     def powershell_test(self):
         powershell_cmd = "powershell.exe" if os_info.is_windows else "pwsh"
-        self.execute_intereactive_shell(
+        stdout = self.execute_intereactive_shell(
             [powershell_cmd, "-ExecutionPolicy", "RemoteSigned", "-NoLogo"],
             """\
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_before.txt
@@ -149,11 +134,13 @@ virtualenv
                 deactivate
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_after.txt
                 """)
+        self.assertIn("conan_venv_test_prompt", stdout,
+                      "Custom prompt is not found")
 
     @unittest.skipUnless(os_info.is_windows and not os_info.is_posix,
                          "Available on Windows only")
     def windows_cmd_test(self):
-        self.execute_intereactive_shell(
+        stdout = self.execute_intereactive_shell(
             "cmd", """\
                 set > env_before.txt
                 activate.bat
@@ -163,3 +150,6 @@ virtualenv
                 deactivate.bat
                 set > env_after.txt
                 """)
+
+        self.assertIn("conan_venv_test_prompt", stdout,
+                      "Custom prompt is not found")
