@@ -25,7 +25,6 @@ class DummyConan(ConanFile):
     def package(self):
         # Create a program in bin folder (added to PATH) so we can check that it can be ran later.
         posix_prog_path = os.path.join(self.package_folder, "bin", "conan_venv_test_prog")
-        tools.save(posix_prog_path + ".cmd", "")
         tools.save(posix_prog_path, "")
         os.chmod(posix_prog_path, 0o755)
 
@@ -46,7 +45,6 @@ virtualenv
             {
                 "conanfile.txt": consumer_conanfile,
                 "original path/conan_original_test_prog": "",
-                "original path/conan_original_test_prog.cmd": ""
             },
             clean_first=True)
         os.chmod(
@@ -70,8 +68,8 @@ virtualenv
         return dict(l.split("=", 1) for l in text.splitlines())
 
     def do_verification(self, stdout, stderr):
-        self.assertFalse(stderr, "Running shell resulted in error")
         stdout = decode_text(stdout)
+        self.assertFalse(stderr, "Running shell resulted in error, output:\n%s" % stdout)
         self.assertRegex(
             stdout,
             r"(?m)^__conan_venv_test_prog_path__=%s.*bin[/\\]conan_venv_test_prog"
@@ -79,7 +77,7 @@ virtualenv
             "Packaged binary was not found in PATH")
         self.assertRegex(
             stdout,
-            r"(?m)^__original_prog_path__=%s/original path[/\\]conan_original_test_prog"
+            r"(?m)^__original_prog_path__=%s.*original path[/\\]conan_original_test_prog"
             % self.client.current_folder.replace("\\", "\\\\"),
             "Activated environment incorrectly preserved PATH")
         activated_env = VirtualEnvIntegrationTest.load_env(
@@ -141,13 +139,13 @@ virtualenv
         powershell_cmd = "powershell.exe" if os_info.is_windows else "pwsh"
         self.execute_intereactive_shell(
             [powershell_cmd, "-ExecutionPolicy", "RemoteSigned", "-NoLogo"], """\
-                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} > env_before.txt
+                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_before.txt
                 . ./activate.ps1
-                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} > env_activated.txt
+                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_activated.txt
                 Write-Host "__conan_venv_test_prog_path__=$((Get-Command conan_venv_test_prog).Source)"
                 Write-Host "__original_prog_path__=$((Get-Command conan_original_test_prog).Source)"
                 deactivate
-                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} > env_after.txt
+                Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_after.txt
                 """)
 
     @unittest.skipUnless(os_info.is_windows and not os_info.is_posix,
@@ -158,8 +156,8 @@ virtualenv
                 set > env_before.txt
                 activate.bat
                 set > env_activated.txt
-                for /f "usebackq tokens=*" %testprog in (`where conan_venv_test_prog`) do echo __conan_venv_test_prog_path__=%testprog
-                for /f "usebackq tokens=*" %testprog in (`where conan_original_test_prog`) do echo __original_prog_path__=%testprog
+                for /f "usebackq tokens=*" %i in (`where conan_venv_test_prog`) do echo __conan_venv_test_prog_path__=%i
+                for /f "usebackq tokens=*" %i in (`where conan_original_test_prog`) do echo __original_prog_path__=%i
                 deactivate.bat
                 set > env_after.txt
                 """)

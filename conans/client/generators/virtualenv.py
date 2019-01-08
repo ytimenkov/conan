@@ -295,7 +295,7 @@ class CmdScriptGenerator(WindowsValueFormats, BasicScriptGenerator):
 
     deactivate_value_format = dedent("""\
         if defined _old_venv_{name} (
-            set {name}=%_old_venv_{name}%
+            set "{name}=%_old_venv_{name}%"
             set _old_venv_{name}=
         ) else (
             set {name}=
