@@ -69,7 +69,8 @@ virtualenv
 
     def do_verification(self, stdout, stderr):
         stdout = decode_text(stdout)
-        self.assertFalse(stderr, "Running shell resulted in error, output:\n%s" % stdout)
+        self.assertFalse(
+            stderr, "Running shell resulted in error, output:\n%s" % stdout)
         self.assertRegex(
             stdout,
             r"(?m)^__conan_venv_test_prog_path__=%s.*bin[/\\]conan_venv_test_prog"
@@ -138,7 +139,8 @@ virtualenv
     def powershell_test(self):
         powershell_cmd = "powershell.exe" if os_info.is_windows else "pwsh"
         self.execute_intereactive_shell(
-            [powershell_cmd, "-ExecutionPolicy", "RemoteSigned", "-NoLogo"], """\
+            [powershell_cmd, "-ExecutionPolicy", "RemoteSigned", "-NoLogo"],
+            """\
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_before.txt
                 . ./activate.ps1
                 Get-ChildItem Env: | ForEach-Object {"$($_.Name)=$($_.Value)"} | Out-File -Encoding utf8 -FilePath env_activated.txt

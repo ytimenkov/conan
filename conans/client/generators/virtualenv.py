@@ -134,6 +134,16 @@ class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
             end
             set -g venv_name "%s"
 
+            functions -c fish_prompt _venv_old_fish_prompt
+
+            function fish_prompt
+                set -l old_status $status
+                printf "%%s(%%s)%%s " (set_color green) $venv_name (set_color normal)
+                # Restore the return status of the previous command.
+                echo "exit $old_status" | .
+                _venv_old_fish_prompt
+            end
+
             %s""") % (self.name, paths_prefix)
 
     activate_value_format = dedent("""\
@@ -154,6 +164,10 @@ class FishScriptGenerator(PosixValueFormats, BasicScriptGenerator):
 
         return dedent("""\
             function deactivate --description "Deactivate current virtualenv"
+
+            functions -e fish_prompt
+            functions -c _venv_old_fish_prompt fish_prompt
+            functions -e _venv_old_fish_prompt
 
             %s
             """) % paths_prefix
@@ -236,7 +250,7 @@ class PowerShellScriptGenerator(WindowsValueFormats, BasicScriptGenerator):
             function global:_old_conan_prompt {""}
             $function:_old_conan_prompt = $function:prompt
             function global:prompt {
-                Write-Host -NoNewline "($env:VENV_NAME) "
+                Write-Host -NoNewline -ForegroundColor Green "($env:VENV_NAME) "
                 _old_conan_prompt
             }
             """) % self.name
