@@ -82,6 +82,8 @@ class VirtualEnvIntegrationTest(unittest.TestCase):
         generator.env = {
             "PATH": [os.path.join(test_folder, "bin")],
             "CFLAGS": ["-O2"],
+            # https://github.com/conan-io/conan/issues/3080
+            "CL": ["-MD", "-DNDEBUG", "-O2", "-Ob2"],
             "USER_VALUE": r"some value with space and \ (backslash)"
         }
         generator.venv_name = "conan_venv_test_prompt"
@@ -92,6 +94,7 @@ class VirtualEnvIntegrationTest(unittest.TestCase):
             test_folder, "original path"), os.pathsep,
                                               preactivate_env.get("PATH", ""))
         preactivate_env["CFLAGS"] = "-g"
+        preactivate_env["CL"] = "-DWIN32"
         preactivate_env["USER_VALUE"] = "original value"
 
         shell_commands = "\n".join([
@@ -130,6 +133,9 @@ class VirtualEnvIntegrationTest(unittest.TestCase):
         self.assertEqual(
             activated_env["CFLAGS"], "-O2 -g",
             "Environment variable with spaces is set incorrectly")
+        self.assertEqual(
+            activated_env["CL"], "-MD -DNDEBUG -O2 -Ob2 -DWIN32"
+        )
         self.assertEqual(activated_env["USER_VALUE"],
                          r"some value with space and \ (backslash)",
                          "Custom variable is set incorrectly")
