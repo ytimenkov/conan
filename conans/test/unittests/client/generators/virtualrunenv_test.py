@@ -11,7 +11,7 @@ class VirtualRunEnvGeneratorTest(unittest.TestCase):
     This Unit Test only verifies that proper values are populated
     from ConanFile into self.env.
     The correctness of generated code is verified by
-    :class:`.run_environment_test.RunEnvironmentTest`
+    :class:`.virtualenv_test.VirtualEnvIntegrationTest`
     """
     def runenv_test(self):
         conanfile = ConanFileMock()

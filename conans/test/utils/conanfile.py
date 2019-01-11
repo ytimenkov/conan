@@ -20,10 +20,16 @@ class MockSettings(object):
 
 MockOptions = MockSettings
 
+
 class MockCppInfo(object):
     def __init__(self):
         self.bin_paths = []
         self.lib_paths = []
+        self.include_paths = []
+        self.libs = []
+        self.cflags = []
+        self.cppflags = []
+        self.defines = []
 
 
 class MockDepsCppInfo(defaultdict):
@@ -128,7 +134,7 @@ class ConanFileMock(ConanFile):
         self.deps_user_info = DepsUserInfo()
         self.deps_cpp_info = MockDepsCppInfo()
         self.env_info = EnvInfo()
-        self._env = EnvValues()
+        self._env = {}
 
     def run(self, command):
         self.command = command
